@@ -1,10 +1,7 @@
 # Tendril — Zero-Latency Local-First AI Copilot (Powered by Moss)
 
-> **YC Fall 2026 x Moss: The Zero Latency Builder Sprint**  
-> **Track:** Local-First AI and The Small Cloud  
-> **Team:** CodeHack  
-> **Submission:** Tendril  
-> **Core Technology:** Moss Runtime (`@inferedge/moss`) for sub-10ms semantic search without a traditional vector database.
+> **Sub-10ms semantic search without a traditional vector database.**  
+> Built with the Moss Runtime (`@inferedge/moss`) and a stateless Small Cloud architecture for private, instant enterprise knowledge retrieval.
 
 ---
 
@@ -142,13 +139,5 @@ npx tsx scripts/test-guardrails.ts
 - **Semantic Search Engine**: Moss Runtime (`@inferedge/moss`), In-process dense vector math & BM25 hybrid ranking
 - **Frontend**: React 18, TypeScript, Vite, Tailwind CSS, Lucide Icons
 - **Stateless Cloud Worker**: Node.js, Express, Server-Sent Events (SSE) streaming
-- **AI Model**: Google Gemini 2.0 Flash (`@google/generative-ai`)
+- **AI Model**: Google Gemini 1.5 Flash (`@google/generative-ai`)
 - **Guardrails**: Enkrypt-style client-side PII redactor and prompt injection filter
-
----
-
-## 📄 Hackathon Metadata
-- **Hackathon:** YC Fall 2026 x Moss: The Zero Latency Builder Sprint (HiDevs)
-- **Problem Statement / Track:** Local-First AI and The Small Cloud
-- **Team Name:** CodeHack
-- **License:** MIT License

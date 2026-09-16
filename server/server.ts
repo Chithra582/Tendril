@@ -170,28 +170,27 @@ RESPONSE:`;
   const activeApiKey = clientApiKey || process.env.GEMINI_API_KEY;
 
   if (activeApiKey) {
-    try {
-      const genAI = new GoogleGenerativeAI(activeApiKey);
-      const model = genAI.getGenerativeModel({
-        model: 'gemini-2.0-flash',
-      });
+    const candidateModels = ['gemini-1.5-flash', 'gemini-1.5-pro', 'gemini-pro'];
+    let streamedSuccess = false;
 
-      const result = await model.generateContentStream(prompt);
+    for (const modelName of candidateModels) {
+      try {
+        const genAI = new GoogleGenerativeAI(activeApiKey);
+        const model = genAI.getGenerativeModel({ model: modelName });
+        const result = await model.generateContentStream(prompt);
 
-      for await (const chunk of result.stream) {
-        const text = chunk.text();
-        res.write(`data: ${JSON.stringify({ type: 'token', token: text })}\n\n`);
+        for await (const chunk of result.stream) {
+          const text = chunk.text();
+          res.write(`data: ${JSON.stringify({ type: 'token', token: text })}\n\n`);
+        }
+
+        res.write(`data: ${JSON.stringify({ type: 'done' })}\n\n`);
+        res.end();
+        streamedSuccess = true;
+        return;
+      } catch (err: any) {
+        console.warn(`[Gemini Relay] Model ${modelName} failed: ${err.message}. Trying next candidate...`);
       }
-
-      res.write(`data: ${JSON.stringify({ type: 'done' })}\n\n`);
-      res.end();
-      return;
-    } catch (err: any) {
-      // If cloud API fails or rate limited, notify client and fall back gracefully
-      res.write(`data: ${JSON.stringify({
-        type: 'token',
-        token: `\n\n*(Note: Cloud Gemini API returned "${err.message || 'Key Error'}". Falling back to Tendril local synthetic reasoning engine)*\n\n`
-      })}\n\n`);
     }
   }
 
