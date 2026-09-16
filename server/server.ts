@@ -1,6 +1,8 @@
 import express, { Request, Response } from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
+import path from 'path';
+import { fileURLToPath } from 'url';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { EnkryptPrivacyGuardrail } from './guardrails';
 
@@ -225,6 +227,19 @@ ${topSnippet.text.slice(0, 300)}...
     await new Promise((resolve) => setTimeout(resolve, 20));
   }
 }
+
+// Serve production frontend build from dist folder
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const distPath = path.resolve(__dirname, '../dist');
+
+app.use(express.static(distPath));
+
+app.get('*', (req: Request, res: Response) => {
+  if (!req.path.startsWith('/api')) {
+    res.sendFile(path.join(distPath, 'index.html'));
+  }
+});
 
 app.listen(PORT, () => {
   console.log(`[Tendril Small Cloud Worker] running on port ${PORT}`);
