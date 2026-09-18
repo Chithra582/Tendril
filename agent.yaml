@@ -1,5 +1,5 @@
 spec_version: "0.1.0"
-name: tendril
+name: "tendril"
 version: "1.0.0"
 description: "Privacy-first, zero-latency local-first AI copilot with sub-10ms semantic search using Moss and Enkrypt-style guardrails"
 author: "Chithra R"
@@ -43,3 +43,14 @@ compliance:
     human_in_the_loop: conditional
     override_capability: true
     kill_switch: true
+
+tags:
+  - "developer-tools"
+  - "data-and-analytics"
+  - "local-first"
+  - "privacy"
+  - "semantic-search"
+
+metadata:
+  domain: "developer-tools"
+  category: "Developer tools"

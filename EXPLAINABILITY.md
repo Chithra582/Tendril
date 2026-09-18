@@ -1,119 +1,160 @@
-# EXPLAINABILITY
+# EXPLAINABILITY.md
 
-> **Tendril Explainability & Transparency Documentation**  
-> This document details the decision-making mechanics, data usage and boundaries, and system limitations of Tendril, satisfying all requirements of the OpenGAP specification and GitAgent Passport Checkpoint 2.
-
----
-
-## How the agent decides
-
-Tendril operates as a local-first retrieval copilot with a deterministic, multi-stage decision pipeline designed to minimize latency and eliminate data leakage:
-
-### 1. Intent Recognition and Route Selection
-- When a user inputs a query or keystroke, Tendril first parses the query to determine the user's intent:
-  - **Instant Search / Navigation Intent:** Evaluated purely on-device at keystroke time.
-  - **Synthesis / Question Answering Intent:** Evaluated for generative completion ("Ask Copilot").
-- The agent determines the target vault scope (`yc-rfs`, `confidential-legal`, `financial-memos`, `engineering-specs`, or user-imported files). If no specific vault is selected, it queries across all active local collections concurrently.
-
-### 2. Dual-Engine Retrieval (Dense + Lexical)
-- Rather than relying on an external cloud vector database, Tendril queries the in-process **Moss runtime** (`@inferedge/moss`) directly within local process memory.
-- The retrieval engine runs two simultaneous scoring processes:
-  - **Dense Vector Semantic Search (65% weight):** Computes cosine similarity between the query embedding and local document chunk vectors, capturing semantic intent, conceptual synonyms, and high-level relevance.
-  - **BM25 Lexical Keyword Search (35% weight):** Matches exact keywords, clause numbers, acronyms, and contractual identifiers (e.g., `"Section 12.1"`, `"PIIPA"`, `"GDPR"`).
-
-### 3. Reciprocal Rank Fusion (RRF) Decision Logic
-- To resolve competing candidates from semantic and lexical searches without bias, Tendril applies Reciprocal Rank Fusion:
-  $$\text{RRF Score}(d) = \frac{0.65}{60 + \text{Rank}_{\text{dense}}(d)} + \frac{0.35}{60 + \text{Rank}_{\text{lexical}}(d)}$$
-- Candidates are ranked by composite score. Documents that perform well across both dense and lexical pipelines receive the highest priority.
-
-### 4. Thresholding and Context Inclusion Decisions
-- **Relevance Cutoff:** Any document chunk with a normalized composite score below **0.45** is discarded as irrelevant to avoid diluting context or inducing hallucinations.
-- **Top-k Extraction:** The top 3 to 5 highest-ranking snippets above the cutoff are selected.
-- **Missing Data Decision:** If no snippets meet the threshold, Tendril explicitly halts the synthesis pipeline and notifies the user that the local vault contains no relevant documents, rather than hallucinating or interpolating ungrounded facts.
-
-### 5. Client-Side Guardrail Evaluation
-Before any external generation request is dispatched:
-- **Injection Interception:** The user prompt is evaluated against adversarial jailbreak, system prompt override, and instruction hijacking patterns. If detected, the agent immediately rejects the request with a `GUARDRAIL_BLOCKED` decision.
-- **PII Redaction Decision:** Any sensitive entity (SSN, credit card, corporate email, API key) detected in the prompt or retrieved snippets is replaced with redacted tokens (e.g., `[REDACTED_SSN]`).
-
-### 6. Edge Generation and Grounded Synthesis
-- Only the sanitized prompt and redacted top-k snippets are transmitted to the stateless edge inference worker (Google Gemini 2.0 Flash).
-- The edge model is strictly prompted to act as a grounded synthesizer: cite source files and section names directly, and refuse to answer questions outside the provided evidence.
+This document explains the internal mechanisms, data lineage, and operational boundaries of **Tendril** in accordance with the OpenGAP specification.
 
 ---
 
-## The data it uses
+## How the Agent Decides
 
-Tendril is architected around a strict data sovereignty model: **Local-First Retrieval, Small Cloud Generation**.
+Tendril makes decisions through a deterministic, local-first retrieval and synthesis pipeline combining in-process hybrid search (dense vector embeddings and BM25 lexical keyword matching) with client-side privacy guardrails and edge-based generative answering.
 
-### 1. Ingested Data Types & Sources
-- **Local Document Files:** Plain text (`.txt`), Markdown (`.md`), PDF documents (`.pdf`), configuration files (`.json`, `.yaml`), and source code (`.ts`, `.py`, `.js`).
-- **Domain Vaults:**
-  - *YC Fall 2026 Requests for Startups (RFS):* Startup trends, voice agent latency, local-first RAG.
-  - *Confidential Legal & NDAs:* Enterprise MSAs, IP assignment agreements, limitation of liability clauses.
-  - *Financial Memos & Audits:* Q3 2026 financial records, burn rate analysis, runway metrics.
-  - *Engineering Specifications:* Moss runtime internals, memory layouts, and API schemas.
-  - *User Imported Data:* Files dragged and dropped into the application by the user.
+### 1. Decision Architecture
+The decision process flows through sequential stages:
 
-### 2. In-Memory Processing & Chunking
-- When files are watched or loaded, text extraction and chunking (500 tokens per chunk with 50-token sliding overlap) occur exclusively in the client's local memory.
-- Dense vector embeddings and BM25 token frequencies are generated locally and stored in local memory or local IndexedDB cache.
+```
+User Query / Keystroke
+    │
+    ▼
+[Stage 1: Intent & Vault Selection]
+    │  - Classifies user intent: Instant Search vs. Generative Copilot Synthesis
+    │  - Identifies target vault scope (yc-rfs, legal, financial, engineering, user files)
+    ▼
+[Stage 2: In-Process Dual-Stream Retrieval (Moss Engine)]
+    │  - Stream A: Dense Vector Semantic Search (65% weight)
+    │  - Stream B: BM25 Lexical Keyword Search (35% weight)
+    ▼
+[Stage 3: Reciprocal Rank Fusion (RRF)]
+    │  - Calculates composite relevance score across dense and lexical ranks
+    │  - RRF Score = 0.65 / (60 + Dense Rank) + 0.35 / (60 + Lexical Rank)
+    ▼
+[Stage 4: Thresholding & Context Selection]
+    │  - Enforces relevance threshold cutoff (score >= 0.45)
+    │  - Selects Top-k candidate snippets (k = 3 to 5)
+    ▼
+(Branching Decision: Are relevant snippets found?)
+    ├── False ──► Halts synthesis; notifies user that local vaults lack relevant data
+    └── True  ──► [Stage 5: Client-Side Enkrypt Guardrail Interception]
+                      │  - Scans prompt for adversarial jailbreaks & system overrides
+                      │  - Redacts sensitive PII (SSN, credit cards, emails, API keys)
+                      ▼
+                  [Stage 6: Edge Generation Relay (Gemini 2.0 Flash)]
+                      │  - Transmits sanitized prompt and redacted snippets over HTTPS
+                      │  - Generates strictly grounded response with document citations
+                      ▼
+                  User Answer with Document & Section Citations
+```
 
-### 3. Strict 0-Byte Raw Egress Boundary
-- **Zero Document Uploads:** Raw files, whole documents, and unchunked vaults are **never** transmitted over the network.
-- **Local Search Egress:** Keystroke search, vector cosine similarity, and BM25 ranking produce **0 Bytes** of outbound network egress. A real-time Privacy Inspector verifies this telemetry live in the UI.
+### 2. Retrieval Criteria & Hybrid Fusion Rubric
+Tendril combines two complementary search methodologies to determine document relevance:
+- **Dense Vector Semantic Search (65% Weight)**: Encodes queries and document chunks into dense vector representations. This captures conceptual intent, synonyms, and high-level relevance (e.g., connecting *"runway"* with *"cash burn and monthly operating expenses"*).
+- **BM25 Lexical Keyword Search (35% Weight)**: Evaluates exact term frequencies and inverse document frequencies. This guarantees high precision for specific clauses, section identifiers, acronyms, and alphanumeric codes (e.g., `"Section 12.1"`, `"PIIPA"`, `"GDPR Article 28"`).
 
-### 4. Transmitted Data (Small Cloud Relay)
-When generative answering ("Ask Copilot") is explicitly triggered:
-- **Sanitized Context Snippets:** Only the top-k extracted snippets (post-PII redaction) are sent.
-- **Sanitized User Query:** The user's query with all PII patterns masked.
-- **Data Redaction Details:**
-  - US Social Security Numbers (`\b\d{3}-\d{2}-\d{4}\b`) masked as `[REDACTED_SSN]`
-  - Credit Card Numbers (`\b(?:\d{4}[-\s]?){3}\d{4}\b`) masked as `[REDACTED_CREDIT_CARD]`
-  - Email Addresses (`[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}`) masked as `[REDACTED_EMAIL]`
-  - API Keys and Access Tokens (`sk-...`, `ghp_...`, `AIza...`) masked as `[REDACTED_API_KEY]`
+### 3. Thresholding & Refusal Decision Criteria
+- **Normalized Cutoff Score (0.45)**: Document chunks scoring below 0.45 normalized composite relevance are discarded to prevent out-of-domain context from polluting the LLM window.
+- **Explicit Missing Data Handling**: If no vault chunks meet the threshold, Tendril decides **not to synthesize an answer**. It informs the user: *"No relevant documents were found in the local vault to answer this query."* This deterministic refusal prevents model hallucination.
 
-### 5. Data Retention & Statelessness
-- The edge inference worker is completely stateless: it does not persist user queries, session transcripts, or snippets to any remote disk or database.
-- Once the streaming response completes, the edge worker's memory is garbage-collected. All conversation history resides exclusively on the user's local device.
+### 4. Client-Side Guardrail Decision Gates
+Before any external HTTP payload is constructed:
+- **Adversarial Injection Check**: Evaluates the prompt against known jailbreak strings, prompt leakage requests, and role-override commands. If detected, the agent triggers a hard block (`GUARDRAIL_BLOCKED`) and logs a security event.
+- **PII Redaction Gate**: Every entity matching configured regex patterns for Social Security numbers, credit card numbers, email addresses, or API keys is replaced with a token placeholder (`[REDACTED_SSN]`, `[REDACTED_CREDIT_CARD]`, `[REDACTED_EMAIL]`, `[REDACTED_API_KEY]`).
+
+### 5. Fallback & Offline Decision Mechanism
+If network connectivity is lost or the user enables **Offline Mode**:
+- The agent falls back to **100% on-device local search**.
+- Search queries, vector calculations, BM25 matching, and vault browsing continue without interruption.
+- The generative edge copilot is cleanly disabled with a user-facing advisory indicating that synthesis requires network restoration.
+
+### 6. Human-in-the-Loop Governance
+Tendril is designed as an auditable assistant:
+- **Zero Background Sync**: Tendril never indexes or modifies external repositories without local user action.
+- **Privacy Inspector Drawer**: Users can inspect live telemetry verifying that 0 bytes of raw data egressed the device during search operations.
+- **Instant Kill Switch**: Users can instantly disconnect the application or switch vaults, terminating any pending edge streaming requests immediately.
 
 ---
 
-## Its limitations
+## The Data It Uses
 
-While Tendril provides privacy-preserving, sub-10ms retrieval, users and auditors should understand its operational boundaries:
+Tendril operates strictly under a local-first data sovereignty architecture with zero raw data exfiltration.
 
-### 1. In-Memory Index Capacity
-- The in-process Moss runtime is optimized for personal, workstation, and team vaults containing up to **50,000 document chunks** (~250 MB of raw text).
-- Enterprise corpuses exceeding hundreds of thousands of files require partitioning across separate specialized vaults rather than a single monolithic in-memory index.
+### 1. Ingested Input Data
+The agent consumes data directly from the user's local filesystem:
+- **Document Files**: Markdown (`.md`), plain text (`.txt`), Adobe PDF documents (`.pdf`), source code (`.ts`, `.py`, `.js`), and configuration files (`.json`, `.yaml`).
+- **Domain Vaults**:
+  - *YC Fall 2026 Requests for Startups (RFS)*: Industry trends, small cloud architecture, local-first RAG.
+  - *Confidential Legal & NDAs*: Master Services Agreements, IP assignment terms, liability limitation clauses.
+  - *Financial Memos & Audits*: Q3 2026 balance sheets, burn rates, CAC/LTV unit economics.
+  - *Engineering Specifications*: Moss runtime internals, memory layout specs, API schemas.
+  - *User Imported Workspace Files*: Local folders and documents dropped into the application by the user.
 
-### 2. Cold-Start Embedding Compute
-- Although subsequent searches complete in sub-10ms (averaging 1.89ms), initial indexing of large document collections requires local CPU/GPU compute to calculate dense embeddings.
-- On low-powered mobile or embedded hardware, initial batch indexing may take several seconds to a minute depending on vault size.
+### 2. In-Memory Chunking & Storage Architecture
+- **In-Process Chunking**: Documents are split into 500-token chunks with a 50-token sliding overlap. All tokenization and text processing execute strictly in local process memory.
+- **In-Process Moss Index**: Embeddings and lexical indices are held in local memory and cached in local IndexedDB or client disk storage.
+- **0-Byte Raw Egress Guarantee**: Raw documents, unredacted files, and complete vaults are **never** uploaded to external servers.
 
-### 3. Offline vs. Online Capabilities
-- **Local Search (100% Offline):** Hybrid semantic search, BM25 keyword matching, vault navigation, and snippet inspection operate completely without an internet connection.
-- **Copilot Synthesis (Requires Network):** Generative answer streaming relies on the stateless edge worker and Google Gemini 2.0 Flash; synthesis is unavailable in offline mode until network connectivity is restored.
+### 3. External Relay Data (Small Cloud Zone)
+When generative answer synthesis ("Ask Copilot") is explicitly requested:
+- **Sanitized Prompt**: The user's prompt after PII redaction and injection screening.
+- **Sanitized Top-k Snippets**: The top 3 to 5 extracted chunks, with all PII patterns masked.
+- **Masked PII Patterns**:
+  - Social Security Numbers: `\b\d{3}-\d{2}-\d{4}\b` $\rightarrow$ `[REDACTED_SSN]`
+  - Credit Card Numbers: `\b(?:\d{4}[-\s]?){3}\d{4}\b` $\rightarrow$ `[REDACTED_CREDIT_CARD]`
+  - Email Addresses: `[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}` $\rightarrow$ `[REDACTED_EMAIL]`
+  - API Keys & Secrets: `sk-...`, `ghp_...`, `AIza...` $\rightarrow$ `[REDACTED_API_KEY]`
 
-### 4. Scope and Knowledge Freshness
-- Tendril has zero access to the live public web or external search engines; its knowledge is strictly bounded by the documents loaded into local vaults.
-- If a document is updated on disk, it is re-indexed via local file watching, but the agent cannot know facts that do not exist within the local filesystem.
-
-### 5. File Formats and Media Limitations
-- Tendril natively parses text-based formats (Markdown, Code, TXT, JSON, text-based PDF).
-- Complex scanned bitmap PDFs, image-only documents, audio files, and video streams require external OCR or transcription before indexing into Tendril.
-
-### 6. Guardrail Edge Cases
-- Client-side regex guardrails detect known patterns of PII and standard prompt injection vectors.
-- Highly obfuscated, non-standard, or zero-day adversarial jailbreak attempts may require secondary evaluation by edge model system prompt constraints.
+### 4. Data Privacy, Storage, and Retention
+- **Stateless Edge Worker**: The edge generation service (Google Gemini 2.0 Flash) is completely stateless. It does not store user prompts, snippets, or session logs in remote databases.
+- **Session Memory**: All chat history and search indices reside in local client memory and can be cleared by the user at any time.
+- **Audit Logging**: Structured JSON audit logs recording timestamps, latency, redactions, and 0-byte egress proofs are stored locally for compliance auditing (GDPR Article 28).
 
 ---
 
 ## Limitations
 
-For reference, the key operational constraints of Tendril are summarized below:
-- **Retrieval Scale:** Optimized for up to 50,000 chunks per workstation vault.
-- **Synthesis Dependency:** Requires outbound HTTPS connectivity to edge worker for generative streaming; search remains offline-capable.
-- **Grounding Scope:** Bounded exclusively to local vault contents; no live internet browsing.
-- **OCR Requirement:** Scanned image-based PDFs require pre-processing before ingestion.
-- **Hardware Profile:** Embedding generation scales with available local CPU/GPU resources.
+Understanding the operational boundaries and constraints of Tendril is critical for safe deployment.
+
+### 1. In-Memory Scale and Capacity Constraints
+- **Workstation Vault Limits**: The in-process Moss runtime is optimized for workstations handling up to **50,000 document chunks** (~250 MB of raw text) at sub-10ms latency.
+- **Partitioning Requirement**: Very large enterprise corpuses (>500,000 documents) must be partitioned across domain-specific vaults rather than indexed into a single flat in-memory collection.
+
+### 2. Compute and Cold-Start Profile
+- **Initial Embedding Latency**: While retrieval takes under 2ms, initial embedding computation for thousands of documents requires local CPU/GPU compute during startup.
+- **Hardware Variation**: Performance depends on the host machine's processing capabilities. Low-spec hardware will exhibit longer initial indexing times.
+
+### 3. Connectivity and Synthesis Boundaries
+- **Offline Search Independence**: Keystroke search, BM25 filtering, and vault navigation work 100% offline.
+- **LLM Synthesis Dependency**: Copilot generative answering requires outbound HTTPS access to the stateless edge generation worker; synthesis is unavailable in fully offline environments.
+
+### 4. Scope and Grounding Boundaries
+- **No Live Internet Access**: Tendril does not have a web crawler or search engine integration; its knowledge is strictly limited to documents present in local vaults.
+- **Static Vault Snapshots**: The agent reflects local documents at the time of file observation. Deletion or external modification of files requires file-watcher re-indexing.
+
+### 5. Media and Formatting Constraints
+- **Text-Focused Extraction**: Tendril natively parses text-based formats (Markdown, Code, TXT, JSON, text-layer PDFs).
+- **OCR Pre-Processing Requirement**: Image-only PDFs, scanned document bitmaps, and multimedia files require external OCR preprocessing before ingestion.
+
+### 6. Security and Guardrail Edge Cases
+- **Regex Coverage**: PII redaction relies on standard regex heuristics. Non-standard formatting or deliberate obfuscation of sensitive entities may escape client-side filters.
+- **Prompt Injection Evolution**: Client-side guardrails neutralize known injection and jailbreak patterns, while secondary defense relies on system prompt constraints enforced by the foundation model.
+
+---
+
+## Summary & Compliance Checklist
+
+| Checkpoint 2 Requirement | Corresponding Section | Status |
+| :--- | :--- | :---: |
+| **How the agent decides** | [How the Agent Decides](#how-the-agent-decides) | **Covered** |
+| - Decision architecture & 6-stage pipeline | Section 1 | Verified |
+| - Dual-engine retrieval & RRF scoring formula | Section 2 | Verified |
+| - Thresholding, refusal & missing data logic | Section 3 | Verified |
+| - Guardrail interception & offline fallback | Section 4 & 5 | Verified |
+| - Human-in-the-loop & privacy inspector | Section 6 | Verified |
+| **The data it uses** | [The Data It Uses](#the-data-it-uses) | **Covered** |
+| - Ingested local files & multi-vault sources | Section 1 | Verified |
+| - In-memory chunking & 0-byte egress guarantee | Section 2 | Verified |
+| - External relay data & PII redaction patterns | Section 3 | Verified |
+| - Stateless edge worker & local audit logging | Section 4 | Verified |
+| **Its limitations** | [Limitations](#limitations) | **Covered** |
+| - In-memory capacity & hardware compute profile | Section 1 & 2 | Verified |
+| - Connectivity boundaries (offline vs synthesis) | Section 3 | Verified |
+| - Grounding scope & no live web browsing | Section 4 | Verified |
+| - Media/OCR constraints & guardrail edge cases | Section 5 & 6 | Verified |
