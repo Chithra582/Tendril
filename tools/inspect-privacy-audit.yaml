@@ -1,0 +1,27 @@
+name: inspect-privacy-audit
+description: Queries the local auditable privacy inspector for zero-egress proofs and security events
+version: 1.0.0
+input_schema:
+  type: object
+  properties:
+    timeframe:
+      type: string
+      description: Time window to inspect (e.g., current_session, last_hour, all)
+      enum:
+        - current_session
+        - last_hour
+        - all
+    include_redactions:
+      type: string
+      description: Whether to include details on redacted PII tokens
+  required:
+    - timeframe
+output_schema:
+  type: object
+  properties:
+    bytes_egressed_search:
+      type: integer
+      description: Total bytes sent externally during local searches (guaranteed 0)
+    redaction_events:
+      type: array
+      description: Log of PII masking actions and injection prevention triggers

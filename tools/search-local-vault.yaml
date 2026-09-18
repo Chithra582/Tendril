@@ -1,0 +1,32 @@
+name: search-local-vault
+description: "Executes in-process hybrid dense vector and BM25 lexical search against local document vaults using Moss"
+version: "1.0.0"
+input_schema:
+  type: object
+  properties:
+    query:
+      type: string
+      description: "The semantic search query or keyword phrase"
+    vault_id:
+      type: string
+      description: "Target vault identifier (e.g., yc-rfs, confidential-legal, financial-memos, engineering-specs, all)"
+      enum:
+        - yc-rfs
+        - confidential-legal
+        - financial-memos
+        - engineering-specs
+        - all
+    top_k:
+      type: integer
+      description: "Maximum number of relevant snippets to return (default: 5)"
+  required:
+    - query
+output_schema:
+  type: object
+  properties:
+    results:
+      type: array
+      description: "Ranked list of retrieved document chunks with scores and metadata"
+    latency_ms:
+      type: number
+      description: "Execution time in milliseconds"

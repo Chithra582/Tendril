@@ -1,0 +1,45 @@
+spec_version: "0.1.0"
+name: tendril
+version: "1.0.0"
+description: "Privacy-first, zero-latency local-first AI copilot with sub-10ms semantic search using Moss and Enkrypt-style guardrails"
+author: "Chithra R"
+license: "MIT"
+
+model:
+  preferred: "gemini-2.0-flash"
+  fallback:
+    - "gpt-4o-mini"
+    - "claude-3-5-sonnet"
+  constraints:
+    temperature: 0.2
+    max_tokens: 4096
+
+skills:
+  - local-semantic-search
+  - privacy-guardrail
+  - multi-vault-query
+
+tools:
+  - search-local-vault
+  - inspect-privacy-audit
+  - sanitize-prompt
+
+compliance:
+  risk_tier: standard
+  frameworks:
+    - gdpr
+  data_governance:
+    pii_handling: redact
+    data_classification: confidential
+    consent_required: true
+    cross_border: false
+    bias_testing: false
+  recordkeeping:
+    audit_logging: true
+    log_format: structured_json
+    retention_period: 1y
+    immutable: true
+  supervision:
+    human_in_the_loop: conditional
+    override_capability: true
+    kill_switch: true

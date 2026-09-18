@@ -1,0 +1,23 @@
+name: sanitize-prompt
+description: Redacts personally identifiable information (PII) and validates prompts against injection attacks
+version: 1.0.0
+input_schema:
+  type: object
+  properties:
+    raw_text:
+      type: string
+      description: Raw user query or document chunk to sanitize
+    strict_mode:
+      type: string
+      description: When enabled, strictly blocks prompts containing suspicious injection syntax
+  required:
+    - raw_text
+output_schema:
+  type: object
+  properties:
+    sanitized_text:
+      type: string
+      description: The sanitized text with PII tokens replaced by redaction placeholders
+    is_blocked:
+      type: string
+      description: Whether the prompt was blocked due to injection detection
