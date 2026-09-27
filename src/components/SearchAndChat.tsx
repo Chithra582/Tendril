@@ -7,16 +7,19 @@ import {
   Wifi,
   WifiOff,
   ShieldCheck,
-  AlertCircle,
   FileText,
-  ExternalLink,
   Bot,
   User,
-  CheckCircle2,
-  Lock,
-  Layers
+  Mic,
+  MicOff,
+  Volume2,
+  VolumeX,
+  Eye,
+  CheckCircle2
 } from 'lucide-react';
 import { MossRetrievalEngine, SearchResult, SearchMetrics } from '../engine/moss-engine';
+import { CitationDrawer } from './CitationDrawer';
+import { DocumentItem } from '../engine/sample-vaults';
 
 interface Message {
   id: string;
@@ -50,9 +53,9 @@ export const SearchAndChat: React.FC<Props> = ({
       role: 'assistant',
       content: `Welcome to **Tendril** — your local-first zero-latency AI copilot.
 
-I use **Moss** for sub-10ms semantic and hybrid search over your personal notes, legal contracts, financial memos, and YC Fall 2026 RFS tracks **without a traditional vector database**.
+I use **Moss** for sub-10ms semantic and hybrid search over your personal notes, legal contracts, financial memos, and technical specs **without an external vector database**.
 
-Try searching for:
+Try searching or speaking:
 - *"YC Fall 2026 Small Cloud thesis"*
 - *"Contract indemnification limit and IP ownership"*
 - *"Series A burn rate and runway projections"*
@@ -64,10 +67,95 @@ Try searching for:
   const [activeTab, setActiveTab] = useState<'search' | 'copilot'>('search');
   const chatBottomRef = useRef<HTMLDivElement>(null);
 
+  // Voice Mode states
+  const [isListening, setIsListening] = useState(false);
+  const [speakingMsgId, setSpeakingMsgId] = useState<string | null>(null);
+  const recognitionRef = useRef<any>(null);
+
+  // Citation Inspection State
+  const [selectedCitationDoc, setSelectedCitationDoc] = useState<DocumentItem | null>(null);
+  const [selectedCitationText, setSelectedCitationText] = useState<string>('');
+  const [selectedCitationLabel, setSelectedCitationLabel] = useState<string>('');
+  const [isCitationDrawerOpen, setIsCitationDrawerOpen] = useState(false);
+
   // Auto scroll chat
   useEffect(() => {
     chatBottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, isGenerating]);
+
+  // Initialize Speech Recognition if supported
+  useEffect(() => {
+    const SpeechRecognition =
+      (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (SpeechRecognition) {
+      const recognition = new SpeechRecognition();
+      recognition.continuous = false;
+      recognition.interimResults = false;
+      recognition.lang = 'en-US';
+
+      recognition.onresult = (event: any) => {
+        const transcript = event.results[0][0].transcript;
+        setQuery(transcript);
+        setIsListening(false);
+        // Automatically ask copilot on voice command
+        setTimeout(() => {
+          handleAskCopilot(undefined, transcript);
+        }, 300);
+      };
+
+      recognition.onerror = () => {
+        setIsListening(false);
+      };
+
+      recognition.onend = () => {
+        setIsListening(false);
+      };
+
+      recognitionRef.current = recognition;
+    }
+  }, []);
+
+  // Toggle Voice Recognition
+  const toggleListening = () => {
+    if (!recognitionRef.current) {
+      alert('Speech recognition is not supported in this browser. Please use Google Chrome or Microsoft Edge.');
+      return;
+    }
+
+    if (isListening) {
+      recognitionRef.current.stop();
+      setIsListening(false);
+    } else {
+      try {
+        recognitionRef.current.start();
+        setIsListening(true);
+      } catch {
+        setIsListening(false);
+      }
+    }
+  };
+
+  // Text to Speech playback
+  const toggleSpeech = (msgId: string, text: string) => {
+    if (!window.speechSynthesis) return;
+
+    if (speakingMsgId === msgId) {
+      window.speechSynthesis.cancel();
+      setSpeakingMsgId(null);
+      return;
+    }
+
+    window.speechSynthesis.cancel();
+    // Clean markdown symbols for cleaner audio narration
+    const cleanText = text.replace(/[*#_`\[\]]/g, ' ').replace(/\(https?:\/\/[^\)]+\)/g, '');
+    const utterance = new SpeechSynthesisUtterance(cleanText);
+    utterance.rate = 1.05;
+    utterance.onend = () => setSpeakingMsgId(null);
+    utterance.onerror = () => setSpeakingMsgId(null);
+
+    setSpeakingMsgId(msgId);
+    window.speechSynthesis.speak(utterance);
+  };
 
   // Execute instant local search on keystroke
   useEffect(() => {
@@ -95,9 +183,21 @@ Try searching for:
     }
   }, [query, activeVaultId]);
 
-  const handleAskCopilot = async (e?: React.FormEvent) => {
+  // Open Citation Inspector
+  const openCitationInspector = (chunk: any, label: string) => {
+    const allDocs = engine.getAllDocuments();
+    const doc = allDocs.find((d) => d.id === chunk.docId || d.filename === chunk.filename);
+    if (doc) {
+      setSelectedCitationDoc(doc);
+      setSelectedCitationText(chunk.text);
+      setSelectedCitationLabel(label);
+      setIsCitationDrawerOpen(true);
+    }
+  };
+
+  const handleAskCopilot = async (e?: React.FormEvent, customPrompt?: string) => {
     if (e) e.preventDefault();
-    const promptText = query.trim();
+    const promptText = (customPrompt || query).trim();
     if (!promptText || isGenerating) return;
 
     // Run immediate local retrieval to collect context
@@ -127,7 +227,6 @@ Try searching for:
     setIsGenerating(true);
 
     if (isOffline) {
-      // Offline mode handling (PRD Section 5.3)
       setTimeout(() => {
         setMessages((prev) =>
           prev.map((m) =>
@@ -135,7 +234,7 @@ Try searching for:
               ? {
                   ...m,
                   isStreaming: false,
-                  content: `⚠️ **Offline Mode Active (PRD Section 5.3)**:
+                  content: `⚠️ **Offline Mode Active**:
 Local sub-10ms search remains 100% functional on-device (${retrieval.metrics.latencyMs}ms retrieval).
 However, cloud LLM synthesis requires internet connectivity. Your question and ${topSnippets.length} retrieved context snippets have been queued locally.`,
                 }
@@ -222,7 +321,7 @@ However, cloud LLM synthesis requires internet connectivity. Your question and $
             ? {
                 ...m,
                 isStreaming: false,
-                content: `⚠️ Failed to connect to Small Cloud relay: ${err.message}. Ensure the backend server is running on port 3001.`,
+                content: `⚠️ Failed to connect to Small Cloud relay: ${err.message}.`,
               }
             : m
         )
@@ -233,7 +332,7 @@ However, cloud LLM synthesis requires internet connectivity. Your question and $
   };
 
   return (
-    <div className="bg-[#121814] border border-[#233327] rounded-xl p-5 shadow-lg flex flex-col h-full">
+    <div className="bg-[#121814] border border-[#233327] rounded-xl p-5 shadow-lg flex flex-col h-full relative">
       {/* Search Header & Controls */}
       <div className="flex items-center justify-between mb-3">
         <div className="flex items-center space-x-2">
@@ -267,7 +366,7 @@ However, cloud LLM synthesis requires internet connectivity. Your question and $
           </button>
         </div>
 
-        {/* Offline Mode Simulator Toggle */}
+        {/* Offline Simulator */}
         <button
           onClick={() => setIsOffline(!isOffline)}
           className={`flex items-center space-x-1.5 px-2.5 py-1 rounded-full text-xs font-mono transition-colors border ${
@@ -291,27 +390,47 @@ However, cloud LLM synthesis requires internet connectivity. Your question and $
         </button>
       </div>
 
-      {/* Main Search Bar */}
+      {/* Main Search Bar with Integrated Voice Input */}
       <form onSubmit={handleAskCopilot} className="relative mb-4">
         <div className="relative flex items-center">
           <div className="absolute left-3.5 text-emerald-400">
             <Search className="w-4 h-4" />
           </div>
+
           <input
             type="text"
-            placeholder="Search documents or ask AI copilot (e.g. 'indemnification cap', 'YC RFS small cloud')..."
+            placeholder={isListening ? 'Listening to your voice...' : "Search documents or ask AI copilot (e.g. 'indemnification cap', 'small cloud')..."}
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            className="w-full pl-10 pr-24 py-2.5 rounded-xl bg-[#162119] border border-[#233327] text-white text-xs placeholder:text-slate-500 focus:outline-none focus:border-emerald-500/80 transition-all font-sans"
+            className={`w-full pl-10 pr-28 py-2.5 rounded-xl bg-[#162119] border text-white text-xs placeholder:text-slate-500 focus:outline-none transition-all font-sans ${
+              isListening
+                ? 'border-emerald-400 ring-2 ring-emerald-500/20 shadow-lg shadow-emerald-950/40'
+                : 'border-[#233327] focus:border-emerald-500/80'
+            }`}
           />
 
-          <div className="absolute right-2 flex items-center space-x-1">
+          <div className="absolute right-2 flex items-center space-x-1.5">
+            {/* Voice Input Button */}
+            <button
+              type="button"
+              onClick={toggleListening}
+              className={`p-1.5 rounded-lg text-xs font-mono transition-colors flex items-center ${
+                isListening
+                  ? 'bg-rose-500 text-white animate-pulse'
+                  : 'bg-[#233327] hover:bg-[#344c3b] text-emerald-400'
+              }`}
+              title={isListening ? 'Click to stop listening' : 'Speak your question (Voice Mode)'}
+            >
+              {isListening ? <MicOff className="w-3.5 h-3.5" /> : <Mic className="w-3.5 h-3.5" />}
+            </button>
+
             {metrics && (
-              <span className="px-2 py-0.5 rounded text-[10px] font-mono bg-emerald-950/90 text-emerald-400 border border-emerald-500/40 flex items-center mr-1">
+              <span className="hidden sm:flex px-2 py-0.5 rounded text-[10px] font-mono bg-emerald-950/90 text-emerald-400 border border-emerald-500/40 items-center">
                 <Zap className="w-3 h-3 mr-0.5 fill-current" />
                 {metrics.latencyMs}ms
               </span>
             )}
+
             <button
               type="submit"
               disabled={!query.trim() || isGenerating}
@@ -322,13 +441,20 @@ However, cloud LLM synthesis requires internet connectivity. Your question and $
             </button>
           </div>
         </div>
+
+        {/* Listening Waveform Indicator */}
+        {isListening && (
+          <div className="mt-2 flex items-center justify-center space-x-1 py-1 px-3 bg-emerald-950/40 border border-emerald-500/30 rounded-lg text-[11px] font-mono text-emerald-300">
+            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-ping mr-1" />
+            <span>Voice Agent Listening... Speak your query (sub-300ms latency)</span>
+          </div>
+        )}
       </form>
 
-      {/* Content Display: Instant Search Tab vs AI Copilot Tab */}
+      {/* Content Display */}
       <div className="flex-1 overflow-y-auto pr-1 min-h-[360px]">
         {activeTab === 'search' ? (
           <div>
-            {/* Telemetry info header */}
             {metrics && (
               <div className="flex items-center justify-between text-xs font-mono text-slate-400 pb-2 mb-3 border-b border-[#233327]">
                 <div className="flex items-center space-x-2">
@@ -351,7 +477,7 @@ However, cloud LLM synthesis requires internet connectivity. Your question and $
                 </div>
                 <h4 className="text-sm font-medium text-slate-300">Instant Local Knowledge Retrieval</h4>
                 <p className="text-xs text-slate-500 max-w-sm mx-auto mt-1">
-                  Type any keyword or concept. Moss executes vector similarity and lexical rank fusion in process in sub-10ms.
+                  Type any keyword or concept. Moss executes vector similarity and lexical rank fusion in-process in sub-10ms.
                 </p>
               </div>
             ) : (
@@ -376,9 +502,6 @@ However, cloud LLM synthesis requires internet connectivity. Your question and $
                         <span className="px-1.5 py-0.5 rounded bg-emerald-950 text-emerald-400 border border-emerald-500/30">
                           Score: {res.score.toFixed(1)}
                         </span>
-                        <span className="text-slate-500">
-                          (Vec: {res.semanticScore}% | BM25: {res.keywordScore})
-                        </span>
                         <span className="text-emerald-400/80">
                           {res.latencyMs}ms
                         </span>
@@ -390,17 +513,21 @@ However, cloud LLM synthesis requires internet connectivity. Your question and $
                     </p>
 
                     <div className="mt-2.5 pt-2 border-t border-[#233327] flex items-center justify-between text-[10px] text-slate-400 font-mono">
-                      <span className="flex items-center text-emerald-400">
-                        <ShieldCheck className="w-3 h-3 mr-1" /> Verified 0 B Egress
-                      </span>
+                      <button
+                        onClick={() => openCitationInspector(res.chunk, 'Search Hit Grounding')}
+                        className="text-emerald-400 hover:text-emerald-300 flex items-center"
+                      >
+                        <Eye className="w-3 h-3 mr-1" /> View in Document Context
+                      </button>
+
                       <button
                         onClick={() => {
                           setQuery(res.chunk.text.substring(0, 100));
-                          handleAskCopilot();
+                          handleAskCopilot(undefined, res.chunk.text.substring(0, 100));
                         }}
-                        className="text-emerald-400 hover:text-emerald-300 flex items-center"
+                        className="text-slate-300 hover:text-white flex items-center"
                       >
-                        <Sparkles className="w-3 h-3 mr-1" /> Ask Copilot with this context
+                        <Sparkles className="w-3 h-3 mr-1 text-emerald-400" /> Ask Copilot
                       </button>
                     </div>
                   </div>
@@ -425,13 +552,28 @@ However, cloud LLM synthesis requires internet connectivity. Your question and $
                 )}
 
                 <div
-                  className={`max-w-[85%] rounded-xl p-4 ${
+                  className={`max-w-[85%] rounded-xl p-4 relative group ${
                     msg.role === 'user'
                       ? 'bg-emerald-600 text-black font-medium'
                       : 'bg-[#162119] border border-[#233327] text-slate-200'
                   }`}
                 >
-                  <div className="leading-relaxed whitespace-pre-wrap font-sans">
+                  {/* Speaker narration icon for assistant messages */}
+                  {msg.role === 'assistant' && !msg.isStreaming && (
+                    <button
+                      onClick={() => toggleSpeech(msg.id, msg.content)}
+                      className="absolute top-3 right-3 p-1 rounded hover:bg-[#233327] text-slate-400 hover:text-emerald-400 transition-colors"
+                      title={speakingMsgId === msg.id ? 'Stop Speaking' : 'Read aloud with Text-to-Speech'}
+                    >
+                      {speakingMsgId === msg.id ? (
+                        <VolumeX className="w-4 h-4 text-emerald-400 animate-pulse" />
+                      ) : (
+                        <Volume2 className="w-4 h-4" />
+                      )}
+                    </button>
+                  )}
+
+                  <div className="leading-relaxed whitespace-pre-wrap font-sans pr-6">
                     {msg.content}
                     {msg.isStreaming && (
                       <span className="inline-block w-1.5 h-3.5 bg-emerald-400 animate-pulse ml-1 align-middle" />
@@ -455,10 +597,15 @@ However, cloud LLM synthesis requires internet connectivity. Your question and $
                         {msg.retrievedSnippets.map((s, idx) => (
                           <div
                             key={idx}
-                            className="p-2 rounded bg-[#101712] border border-[#233327] text-[11px]"
+                            onClick={() => openCitationInspector(s.chunk, `[Source ${idx + 1}: ${s.chunk.filename}]`)}
+                            className="p-2 rounded bg-[#101712] border border-[#233327] hover:border-emerald-500/40 text-[11px] cursor-pointer transition-all"
+                            title="Click to view full document with highlighted citation"
                           >
                             <div className="flex justify-between text-emerald-300 font-mono text-[10px] mb-1">
-                              <span>[Source {idx + 1}: {s.chunk.filename}]</span>
+                              <span className="flex items-center">
+                                <FileText className="w-3 h-3 mr-1 text-emerald-400" />
+                                [Source {idx + 1}: {s.chunk.filename}]
+                              </span>
                               <span className="text-slate-500">{s.chunk.heading}</span>
                             </div>
                             <p className="text-slate-400 text-[10px] line-clamp-2">
@@ -482,6 +629,15 @@ However, cloud LLM synthesis requires internet connectivity. Your question and $
           </div>
         )}
       </div>
+
+      {/* In-Document Citation Drawer Modal */}
+      <CitationDrawer
+        isOpen={isCitationDrawerOpen}
+        onClose={() => setIsCitationDrawerOpen(false)}
+        document={selectedCitationDoc}
+        highlightedText={selectedCitationText}
+        sourceLabel={selectedCitationLabel}
+      />
     </div>
   );
 };

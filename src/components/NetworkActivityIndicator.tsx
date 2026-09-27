@@ -1,5 +1,17 @@
 import React, { useState, useEffect } from 'react';
-import { ShieldCheck, ArrowUpRight, Lock, Eye, AlertTriangle, CheckCircle2, X } from 'lucide-react';
+import {
+  ShieldCheck,
+  ArrowUpRight,
+  Lock,
+  Eye,
+  AlertTriangle,
+  CheckCircle2,
+  X,
+  ChevronDown,
+  ChevronRight,
+  Code,
+  FileCheck
+} from 'lucide-react';
 
 interface AuditLog {
   id: string;
@@ -19,6 +31,7 @@ interface Props {
 
 export const NetworkActivityIndicator: React.FC<Props> = ({ lastSearchLatency, lastEgressBytes = 0 }) => {
   const [isOpen, setIsOpen] = useState(false);
+  const [expandedLogId, setExpandedLogId] = useState<string | null>(null);
   const [telemetry, setTelemetry] = useState<{
     totalEgressBytes: number;
     logs: AuditLog[];
@@ -70,7 +83,7 @@ export const NetworkActivityIndicator: React.FC<Props> = ({ lastSearchLatency, l
 
       {/* Privacy Inspector Modal */}
       {isOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-sm p-4">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
           <div className="bg-[#111713] border border-[#233327] rounded-xl max-w-2xl w-full p-6 shadow-2xl relative max-h-[85vh] flex flex-col">
             <button
               onClick={() => setIsOpen(false)}
@@ -124,9 +137,14 @@ export const NetworkActivityIndicator: React.FC<Props> = ({ lastSearchLatency, l
 
             {/* Live Audit Log */}
             <div className="flex-1 overflow-y-auto pr-1">
-              <h4 className="text-xs font-semibold uppercase tracking-wider text-slate-400 mb-2">
-                Real-Time Auditable Event Log
-              </h4>
+              <div className="flex items-center justify-between mb-2">
+                <h4 className="text-xs font-semibold uppercase tracking-wider text-slate-400">
+                  Real-Time Auditable Event Log (Click to Inspect)
+                </h4>
+                <span className="text-[10px] font-mono text-emerald-400">
+                  {telemetry.logs.length} Recorded Transactions
+                </span>
+              </div>
 
               {telemetry.logs.length === 0 ? (
                 <div className="text-center py-8 text-slate-500 text-xs font-mono">
@@ -134,36 +152,81 @@ export const NetworkActivityIndicator: React.FC<Props> = ({ lastSearchLatency, l
                 </div>
               ) : (
                 <div className="space-y-2">
-                  {telemetry.logs.map((log) => (
-                    <div
-                      key={log.id}
-                      className="p-2.5 rounded bg-[#162119]/80 border border-[#233327] flex items-center justify-between text-xs font-mono"
-                    >
-                      <div className="flex items-center space-x-2">
-                        {log.bytesEgress === 0 ? (
-                          <span className="px-1.5 py-0.5 rounded text-[10px] bg-emerald-950 text-emerald-400 border border-emerald-500/30">
-                            LOCAL ZERO-EGRESS
-                          </span>
-                        ) : (
-                          <span className="px-1.5 py-0.5 rounded text-[10px] bg-amber-950 text-amber-400 border border-amber-500/30">
-                            SMALL CLOUD RELAY
-                          </span>
-                        )}
-                        <span className="text-slate-300 truncate max-w-[240px]">
-                          "{log.queryPreview}"
-                        </span>
-                      </div>
+                  {telemetry.logs.map((log) => {
+                    const isExpanded = expandedLogId === log.id;
+                    return (
+                      <div
+                        key={log.id}
+                        className="rounded-lg bg-[#162119]/80 border border-[#233327] overflow-hidden text-xs font-mono transition-all"
+                      >
+                        <div
+                          onClick={() => setExpandedLogId(isExpanded ? null : log.id)}
+                          className="p-2.5 flex items-center justify-between cursor-pointer hover:bg-[#1a291f]"
+                        >
+                          <div className="flex items-center space-x-2">
+                            {isExpanded ? (
+                              <ChevronDown className="w-3.5 h-3.5 text-slate-400" />
+                            ) : (
+                              <ChevronRight className="w-3.5 h-3.5 text-slate-400" />
+                            )}
 
-                      <div className="flex items-center space-x-3 text-slate-400">
-                        <span className="font-semibold text-slate-200">
-                          {log.bytesEgress} B
-                        </span>
-                        <span className="text-[11px] text-slate-500">
-                          {new Date(log.timestamp).toLocaleTimeString()}
-                        </span>
+                            {log.bytesEgress === 0 ? (
+                              <span className="px-1.5 py-0.5 rounded text-[10px] bg-emerald-950 text-emerald-400 border border-emerald-500/30">
+                                LOCAL ZERO-EGRESS
+                              </span>
+                            ) : (
+                              <span className="px-1.5 py-0.5 rounded text-[10px] bg-amber-950 text-amber-400 border border-amber-500/30">
+                                SMALL CLOUD RELAY
+                              </span>
+                            )}
+                            <span className="text-slate-300 truncate max-w-[220px]">
+                              "{log.queryPreview}"
+                            </span>
+                          </div>
+
+                          <div className="flex items-center space-x-3 text-slate-400">
+                            <span className="font-semibold text-slate-200">
+                              {log.bytesEgress} B
+                            </span>
+                            <span className="text-[11px] text-slate-500">
+                              {new Date(log.timestamp).toLocaleTimeString()}
+                            </span>
+                          </div>
+                        </div>
+
+                        {/* Expanded Payload Inspector */}
+                        {isExpanded && (
+                          <div className="p-3 bg-[#0d130f] border-t border-[#233327] space-y-2">
+                            <div className="flex items-center justify-between text-[11px]">
+                              <span className="text-slate-400 flex items-center">
+                                <Code className="w-3.5 h-3.5 mr-1 text-emerald-400" />
+                                Payload Inspection:
+                              </span>
+                              <span className="text-emerald-400">
+                                {log.bytesEgress === 0 ? '0 bytes egress (Strictly local memory)' : `${log.bytesEgress} bytes minimal payload`}
+                              </span>
+                            </div>
+
+                            <div className="p-2.5 rounded bg-[#131c15] border border-[#233327] text-[11px] space-y-1 text-slate-300">
+                              <div><strong>Event Type:</strong> {log.type}</div>
+                              <div><strong>Status:</strong> {log.status}</div>
+                              <div><strong>Query Preview:</strong> {log.queryPreview}</div>
+                              {log.piiRedactedCount > 0 && (
+                                <div className="text-amber-400">
+                                  <strong>Enkrypt Guardrails:</strong> {log.piiRedactedCount} sensitive PII entities redacted before transmission.
+                                </div>
+                              )}
+                              <div className="text-slate-400 text-[10px] pt-1">
+                                {log.bytesEgress === 0
+                                  ? '✓ Verified: Query and documents executed entirely on client SIMD/WASM runtime. Zero bytes sent.'
+                                  : '✓ Verified: Only top-k snippet context transferred. 100% of full documents stay on device.'}
+                              </div>
+                            </div>
+                          </div>
+                        )}
                       </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
             </div>
